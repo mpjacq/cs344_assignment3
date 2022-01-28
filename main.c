@@ -39,7 +39,7 @@ struct cmd_elements
     int numArgs;
     char *inputFile;
     char *outputFile;
-    int background;
+    int background;     // 0 = no, 1 = yes
 };
 
 struct cmd_elements *getUserInput()
@@ -82,9 +82,15 @@ struct cmd_elements *getUserInput()
 
     // // getline leaves newline in input, remove this
     userInput[strlen(userInput)-1] = '\0';
-    // printf("User input before tokenizing is: %s\n", userInput);
-    // Maybe try iterating through this string in reverse, to see if the
-    // last non-whitespace character encountered is the &?
+    
+    // Check if the first character is a #, this means line is a comment
+    if (userInput[0] == '#')
+    {
+        // TODO - decide how to properly handle this error
+        printf("Blank entry\n");
+        fflush(stdout);
+        exit(0);
+    }
 
     // Extract the command elements
     struct cmd_elements *userCmd = malloc(sizeof(struct cmd_elements));
@@ -167,6 +173,18 @@ struct cmd_elements *getUserInput()
             }
         }
     }
+
+    // Check if the last argument is "&", set background flag if so
+    if (strcmp(userCmd->userArgs[userCmd->numArgs - 1], "&") == 0)
+    {
+        userCmd->background = 1;
+        // This also cuts off any args entered after & which should not be
+        // considered valid anyways.
+        userCmd->userArgs[userCmd->numArgs - 1] = NULL;
+        free(userCmd->userArgs[userCmd->numArgs - 1]);
+        userCmd->numArgs--;
+        argIndex--;
+    }
     
     printf("Command: %s\n", userCmd->cmd);
 
@@ -177,6 +195,7 @@ struct cmd_elements *getUserInput()
     printf("Input redirect: %s\n", userCmd->inputFile);
     printf("Output redirect: %s\n", userCmd->outputFile);
     printf("NumArgs: %d\n", userCmd->numArgs);
+    printf("Background (0 for no, 1 for yes): %d\n", userCmd->background);
 
     return userCmd;
 
@@ -203,6 +222,7 @@ int main(void)
     printf("Input redirect: %s\n", currentCmd->inputFile);
     printf("Output redirect: %s\n", currentCmd->outputFile);
     printf("NumArgs: %d\n", currentCmd->numArgs);
+    printf("Background (0 for no, 1 for yes): %d\n", currentCmd->background);
 
     continueProgram++;
     }
