@@ -13,6 +13,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <signal.h>
 
 #define MAX_CMD_LENGTH 2048
 
@@ -40,8 +42,16 @@ struct cmd_elements
     char *inputFile;
     char *outputFile;
     int background;     // 0 = no, 1 = yes
+
 };
 
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
 struct cmd_elements *getUserInput()
 {
     // char userInput[] = "cmd arg1hello arg2$$xyz$$qwr";
@@ -92,20 +102,26 @@ struct cmd_elements *getUserInput()
         exit(0);
     }
 
-    // Extract the command elements
+    // Create a command struct to store data about the command entered
     struct cmd_elements *userCmd = malloc(sizeof(struct cmd_elements));
+    
+    // Initialize all userArgs elements to NULL
+    for (int i = 0; i < 512; i++)
+    {
+        userCmd->userArgs[i] = NULL;
+    }
+
+     // Extract the command elements
     char *saveptr;
-    // The first token is the command
-    // strtok_r returns a pointer to the next token or NULL if there are no more
     char *token = strtok_r(userInput, " ", &saveptr);
-    userCmd->cmd = calloc(strlen(token) + 1, sizeof(char));
+    userCmd->cmd = calloc(strlen(token) + 1, sizeof(char));   // The first token is the command
     strncpy(userCmd->cmd, token, (strlen(token) + 1));
 
     int argIndex = 0;
-    
+
+    // strtok_r returns a pointer to the next token or NULL if there are no more
     while (token != NULL)
     {
-        printf("%s\n", token); // this is the command
         token = strtok_r(NULL, " ", &saveptr); // this advances to the next token
 
         if (token != NULL)
@@ -132,7 +148,9 @@ struct cmd_elements *getUserInput()
             {
                 // Check token for $$ variables
                 char newStr[100];
-                char pidStr[] = "PID";
+                int pid = getpid();
+                char pidStr[50];
+                snprintf(pidStr, sizeof(pidStr), "%d", pid);
                 int tokenLen = strlen(token);
                 int nextIndexNewStr = 0;
                 //int nextIndexToken = 0;
@@ -185,20 +203,100 @@ struct cmd_elements *getUserInput()
         userCmd->numArgs--;
         argIndex--;
     }
-    
-    printf("Command: %s\n", userCmd->cmd);
-
-    for (int i = 0; i < argIndex; i++)
-    {
-        printf("Arg %d: %s length %lu\n", i + 1, userCmd->userArgs[i], strlen(userCmd->userArgs[i]));
-    }
-    printf("Input redirect: %s\n", userCmd->inputFile);
-    printf("Output redirect: %s\n", userCmd->outputFile);
-    printf("NumArgs: %d\n", userCmd->numArgs);
-    printf("Background (0 for no, 1 for yes): %d\n", userCmd->background);
 
     return userCmd;
 
+}
+
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void exitCmd()
+{
+    // TODO - make sure this kills all child processes of the parent
+    exit(0);
+}
+
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void chDirCmd(struct cmd_elements *currentCmd)
+{    
+    // If there is no argument, take the user to the home directory
+    if (currentCmd->numArgs == 0)
+    {
+        // The function getenv looks for the environment variable name. 
+        // If this variable is defined, the function returns a pointer to its value. 
+        // If this variable is not in the environment list, then NULL is returned.
+        chdir(getenv("HOME"));
+    }
+    // Is the path in the form /xxxx? Then it is an absolute path.
+    else if (currentCmd->userArgs[0][0] == '/')
+    {
+        if (chdir(currentCmd->userArgs[0]) == -1)
+        {
+            printf("cd error - filepath %s is not valid.\n", currentCmd->userArgs[0]);
+            fflush(stdout);
+        }
+        else
+        {
+            chdir(currentCmd->userArgs[0]);
+        }
+    }
+    // Otherwise, the path is in the form subfolder/etc
+    // and is a relative path, so we need to append it to the cwd.
+    else
+    {
+        char targetDir[MAX_CMD_LENGTH];
+        getcwd(targetDir, sizeof(targetDir));
+        strcat(targetDir, "/");
+        strcat(targetDir, currentCmd->userArgs[0]);
+
+        if (chdir(targetDir) == -1)
+        {
+            printf("cd error - filepath %s is not valid.\n", targetDir);
+            fflush(stdout);
+        }
+        else
+        {
+            chdir(targetDir);
+        }
+    }
+    // The getcwd() function copies an absolute pathname of the current
+    //    working directory to the array pointed to by buf, which is of
+    //    length size. (https://man7.org/linux/man-pages/man3/getcwd.3.html)
+
+
+}
+
+// Debug printing
+void printCommand(struct cmd_elements *currentCmd)
+{
+    printf("Command Entered: %s\n", currentCmd->cmd);
+    fflush(stdout);
+    int argIndex = 0;
+    while (currentCmd->userArgs[argIndex] != NULL)
+    {
+        printf("Arg %d: %s\n", argIndex + 1, currentCmd->userArgs[argIndex]);
+        fflush(stdout);
+        argIndex++;
+    }
+    printf("Input redirect: %s\n", currentCmd->inputFile);
+    fflush(stdout);
+    printf("Output redirect: %s\n", currentCmd->outputFile);
+    fflush(stdout);
+    printf("NumArgs: %d\n", currentCmd->numArgs);
+    fflush(stdout);
+    printf("Background (0 for no, 1 for yes): %d\n", currentCmd->background);
+    fflush(stdout);
 }
 
 
@@ -206,23 +304,33 @@ int main(void)
 {
     int continueProgram = 1;
 
-    while (continueProgram < 2)
+    while (continueProgram < 5)
     {
     
     struct cmd_elements *currentCmd = getUserInput();
     
     // Debug printing
-    printf("IN MAIN --- Command: %s\n", currentCmd->cmd);
-    int argIndex = 0;
-    while (currentCmd->userArgs[argIndex] != NULL)
+    printCommand(currentCmd);
+
+    if (strcmp(currentCmd->cmd, "exit") == 0)
     {
-        printf("Arg %d: %s\n", argIndex + 1, currentCmd->userArgs[argIndex]);
-        argIndex++;
+        exitCmd();
     }
-    printf("Input redirect: %s\n", currentCmd->inputFile);
-    printf("Output redirect: %s\n", currentCmd->outputFile);
-    printf("NumArgs: %d\n", currentCmd->numArgs);
-    printf("Background (0 for no, 1 for yes): %d\n", currentCmd->background);
+
+    if (strcmp(currentCmd->cmd, "cd") == 0)
+    {
+        char buffer[100];
+        int bufsize = 100;
+        char buffer2[100];
+        int bufsize2 = 100;
+
+        getcwd(buffer, bufsize);
+        printf("cwd before calling chDirCmd: %s\n", buffer);
+        chDirCmd(currentCmd);
+        getcwd(buffer2, bufsize2);
+        printf("cwd after calling chDirCmd: %s\n", buffer2);
+        // /Users/mjacq/CS344/
+    }
 
     continueProgram++;
     }
