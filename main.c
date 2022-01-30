@@ -108,7 +108,7 @@ struct cmd_elements *getUserInput()
     // Initialize all userArgs elements to NULL
     for (int i = 0; i < 512; i++)
     {
-        userCmd->userArgs[i] = NULL;
+        userCmd->userArgs[i] = (char *) NULL;
     }
 
      // Extract the command elements
@@ -277,6 +277,62 @@ void chDirCmd(struct cmd_elements *currentCmd)
 
 }
 
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+int runCommand(struct cmd_elements *currentCmd){
+	
+    printf("In runCommand, received cmd: %s\nArgs: ", currentCmd->cmd);
+
+    int argIndex = 0;
+    while (currentCmd->userArgs[argIndex] != NULL)
+    {
+        printf("%s, ", currentCmd->userArgs[argIndex]);
+        fflush(stdout);
+        argIndex++;
+    }
+    printf("\n");
+    
+    // Below is adapted from Canvas: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-process-api-monitoring-child-processes?module_item_id=21835973
+    // Accessed 1.29.22
+    //TODO - need to populate an array with NULL, arg1, arg2...argn...NULL
+    char *newargv[] = { NULL, currentCmd->userArgs[0], NULL };
+	int childStatus;
+
+	// Fork a new process
+	pid_t spawnPid = fork();
+
+	switch(spawnPid){
+	case -1:
+		perror("fork()\n");
+		exit(1);
+		break;
+	case 0:
+		// In the child process
+		printf("CHILD(%d) running %s command after sleep\n", getpid(), currentCmd->cmd);
+        fflush(stdout);
+        //sleep(5);
+		// Replace the current program with "/bin/ls"
+		execvp(currentCmd->cmd, newargv);
+		// exec only returns if there is an error
+		perror("execvp");
+		exit(2);
+		break;
+	default:
+		// In the parent process
+		// Wait for child's termination
+		spawnPid = waitpid(spawnPid, &childStatus, 0);
+		printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
+        fflush(stdout);
+		exit(0);
+		break;
+	} 
+}
+
 // Debug printing
 void printCommand(struct cmd_elements *currentCmd)
 {
@@ -326,10 +382,16 @@ int main(void)
 
         getcwd(buffer, bufsize);
         printf("cwd before calling chDirCmd: %s\n", buffer);
+        fflush(stdout);
         chDirCmd(currentCmd);
         getcwd(buffer2, bufsize2);
         printf("cwd after calling chDirCmd: %s\n", buffer2);
+        fflush(stdout);
         // /Users/mjacq/CS344/
+    }
+    else
+    {
+        runCommand(currentCmd);
     }
 
     continueProgram++;
