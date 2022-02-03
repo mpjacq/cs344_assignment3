@@ -329,6 +329,73 @@ void runCommand(struct cmd_elements *currentCmd, int *status){
 		printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
         fflush(stdout);
         // sleep(10);
+
+        // Check for input/output redirection (assignment instructions recommended
+        // handling this in the CHILD process)
+        // Note that after using dup2() to set up the redirection, the redirection 
+        // symbol and redirection destination/source are NOT passed into the exec command
+        // For example, if the command given is ls > junk, then you handle the 
+        // redirection to "junk" with dup2() and then simply pass ls into exec().
+
+        if (currentCmd->inputFile != NULL)
+        {
+            // An input file redirected via stdin should be opened for reading only; 
+            // if your shell cannot open the file for reading, it should print an error 
+            // message and set the exit status to 1 (but don't exit the shell).
+            int inFile = open(currentCmd->inputFile, O_RDONLY);
+            // Check if error
+            if (inFile == -1)
+            {
+                printf("Cannot open %s for input.\n", currentCmd->inputFile);
+                fflush(stdout);
+                exit(1);
+            }
+            // If no error, use dup2() to set up redirection
+            // inFile will contain the file descriptor
+            else
+            {
+                int dupInResult = dup2(inFile, 0);
+                // Check for error - returns -1 on error
+                if (dupInResult == -1)
+                {
+                    printf("Cannot redirect %s for input.\n", currentCmd->inputFile);
+                    fflush(stdout);
+                    exit(1);
+                }
+            }
+
+        }
+
+        if (currentCmd->outputFile != NULL)
+        {
+            // Similarly, an output file redirected via stdout should be opened 
+            // for writing only; it should be truncated if it already exists or 
+            // created if it does not exist. If your shell cannot open the output 
+            // file it should print an error message and set the exit status to 1 
+            // (but don't exit the shell).
+            int outFile = open(currentCmd->outputFile, O_CREAT | O_WRONLY | O_TRUNC, 0777);
+            // Check if error
+            if (outFile == -1)
+            {
+                printf("Cannot open %s for output.\n", currentCmd->outputFile);
+                fflush(stdout);
+                exit(1);
+            }
+            // If no error, use dup2() to set up redirection
+            // outFile will contain the file descriptor
+            else
+            {
+                int dupOutResult = dup2(outFile, 1);
+                // Check for error - returns -1 on error
+                if (dupOutResult == -1)
+                {
+                    printf("Cannot redirect %s for output.\n", currentCmd->outputFile);
+                    fflush(stdout);
+                    exit(1);
+                }
+            }
+
+        }
 		
         execvp(argsWithFrontBuffer[0], argsWithFrontBuffer);
 
