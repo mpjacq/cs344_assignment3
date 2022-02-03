@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <signal.h>
+#include <errno.h>
 
 #define MAX_CMD_LENGTH 2048
 
@@ -35,13 +36,12 @@
 // and a maximum of 512 arguments.
 struct cmd_elements
 {
-    // Array of pointers to strings
     char *cmd;
-    char *userArgs[512];
+    char *userArgs[512];    // Array of pointers to strings
     int numArgs;
     char *inputFile;
     char *outputFile;
-    int background;     // 0 = no, 1 = yes
+    int background;         // 0 = no, 1 = yes
 
 };
 
@@ -54,26 +54,22 @@ struct cmd_elements
 ----------------------------------------------------------------------- */
 struct cmd_elements *getUserInput()
 {
-    // char userInput[] = "cmd arg1hello arg2$$xyz$$qwr";
+    // char userInput[] = "exit";
     char userInput[MAX_CMD_LENGTH * sizeof(char)];
     char *u = userInput;
     size_t buflen = MAX_CMD_LENGTH;
     ssize_t charsRead;
 
     // Use the colon : symbol as a prompt for each command line. 
+    // Flush out the output buffers each time you print
     printf(": ");
-
-    // flush out the output buffers each time you print, as the text that you're 
-    // outputting may not reach the screen until you do in this kind of interactive 
-    // program. To do this, call fflush() immediately after each and every time 
-    // you output text.
     fflush(stdout);
 
     // The general syntax of a command line is:
     // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
     charsRead = getline(&u, &buflen, stdin);
 
-    // // Check if getline was successful, it will return -1 if not
+    // Check if getline was successful, it will return -1 if not
     if (charsRead == -1)
     {
         // TODO - decide how to properly handle this error
@@ -87,20 +83,21 @@ struct cmd_elements *getUserInput()
         // TODO - decide how to properly handle this error
         printf("Blank entry\n");
         fflush(stdout);
-        exit(0);
     }
-
-    // // getline leaves newline in input, remove this
-    userInput[strlen(userInput)-1] = '\0';
-    
-    // Check if the first character is a #, this means line is a comment
-    if (userInput[0] == '#')
+    else 
     {
-        // TODO - decide how to properly handle this error
-        printf("Blank entry\n");
-        fflush(stdout);
-        exit(0);
+        // getline leaves newline in input, remove this
+        userInput[strlen(userInput)-1] = '\0';
     }
+    
+    // // Check if the first character is a #, this means line is a comment
+    // if (userInput[0] == '#')
+    // {
+    //     // TODO - decide how to properly handle this error
+    //     printf("Blank entry\n");
+    //     fflush(stdout);
+    //     exit(0);
+    // }
 
     // Create a command struct to store data about the command entered
     struct cmd_elements *userCmd = malloc(sizeof(struct cmd_elements));
@@ -113,83 +110,93 @@ struct cmd_elements *getUserInput()
 
      // Extract the command elements
     char *saveptr;
-    char *token = strtok_r(userInput, " ", &saveptr);
-    userCmd->cmd = calloc(strlen(token) + 1, sizeof(char));   // The first token is the command
-    strncpy(userCmd->cmd, token, (strlen(token) + 1));
-
-    int argIndex = 0;
-
-    // strtok_r returns a pointer to the next token or NULL if there are no more
-    while (token != NULL)
+    char *token = strtok_r(userInput, " \n", &saveptr);
+    
+    if (token != NULL)
     {
-        token = strtok_r(NULL, " ", &saveptr); // this advances to the next token
+        userCmd->cmd = calloc(strlen(token) + 1, sizeof(char));   // The first token is the command
+        strncpy(userCmd->cmd, token, (strlen(token) + 1));
 
-        if (token != NULL)
+        int argIndex = 0;
+
+        // strtok_r returns a pointer to the next token or NULL if there are no more
+        while (token != NULL)
         {
-            // check if the token is < > or &
-            if (strcmp(token, "<") == 0)
-            {
-                // then the next token we would want to store in userCmd->inputFile
-                // advance past the "<" to get it
-                token = strtok_r(NULL, " ", &saveptr);
-                userCmd->inputFile = calloc(strlen(token) + 1, sizeof(char));
-                strncpy(userCmd->inputFile, token, (strlen(token) + 1));
-            }
-            else if (strcmp(token, ">") == 0)
-            {
-                // then the next token we would want to store in userCmd->outputFile
-                // advance past the ">" to get it
-                token = strtok_r(NULL, " ", &saveptr);
-                userCmd->outputFile = calloc(strlen(token) + 1, sizeof(char));
-                strncpy(userCmd->outputFile, token, (strlen(token) + 1));
-            }
-            // start storing arguments
-            else
-            {
-                // Check token for $$ variables
-                char newStr[100];
-                int pid = getpid();
-                char pidStr[50];
-                snprintf(pidStr, sizeof(pidStr), "%d", pid);
-                int tokenLen = strlen(token);
-                int nextIndexNewStr = 0;
-                //int nextIndexToken = 0;
+            token = strtok_r(NULL, " ", &saveptr); // this advances to the next token
 
-                // Initialize newStr
-                for (int n = 0; n < 100; n++)
+            if (token != NULL)
+            {
+                // check if the token is < > or &
+                if (strcmp(token, "<") == 0)
                 {
-                    newStr[n] = '\0';
+                    // then the next token we would want to store in userCmd->inputFile
+                    // advance past the "<" to get it
+                    token = strtok_r(NULL, " ", &saveptr);
+                    userCmd->inputFile = calloc(strlen(token) + 1, sizeof(char));
+                    strncpy(userCmd->inputFile, token, (strlen(token) + 1));
                 }
-
-                for (int i = 0; i < tokenLen; i++)
+                else if (strcmp(token, ">") == 0)
                 {
-                    if (token[i] == '$' && token[i + 1] == '$')
+                    // then the next token we would want to store in userCmd->outputFile
+                    // advance past the ">" to get it
+                    token = strtok_r(NULL, " ", &saveptr);
+                    userCmd->outputFile = calloc(strlen(token) + 1, sizeof(char));
+                    strncpy(userCmd->outputFile, token, (strlen(token) + 1));
+                }
+                // start storing arguments
+                else
+                {
+                    // Check token for $$ variables
+                    char newStr[100];
+                    int pid = getpid();
+                    char pidStr[50];
+                    snprintf(pidStr, sizeof(pidStr), "%d", pid);
+                    int tokenLen = strlen(token);
+                    int nextIndexNewStr = 0;
+                    //int nextIndexToken = 0;
+
+                    // Initialize newStr
+                    for (int n = 0; n < 100; n++)
                     {
-                        // at next available index of newStr, start writing the variable
-                        for (int j = 0; j < strlen(pidStr); j++)
+                        newStr[n] = '\0';
+                    }
+
+                    for (int i = 0; i < tokenLen; i++)
+                    {
+                        if (token[i] == '$' && token[i + 1] == '$')
                         {
-                            newStr[nextIndexNewStr] = pidStr[j];
+                            // at next available index of newStr, start writing the variable
+                            for (int j = 0; j < strlen(pidStr); j++)
+                            {
+                                newStr[nextIndexNewStr] = pidStr[j];
+                                nextIndexNewStr++;
+                            }
+                            // skip the next char in the token
+                            i++;
+
+                        }
+                        // Next char is not a $ followed by another $ and should be copied over
+                        else
+                        {
+                            newStr[nextIndexNewStr] = token[i];
                             nextIndexNewStr++;
                         }
-                        // skip the next char in the token
-                        i++;
+                    }
 
-                    }
-                    // Next char is not a $ followed by another $ and should be copied over
-                    else
-                    {
-                        newStr[nextIndexNewStr] = token[i];
-                        nextIndexNewStr++;
-                    }
+                    char *heapPtr = calloc(strlen(newStr) + 1, sizeof(char));
+                    strncpy(heapPtr, newStr, (strlen(newStr) + 1));
+                    userCmd->userArgs[argIndex] = heapPtr;
+                    argIndex++;
+                    userCmd->numArgs++;
                 }
-
-                char *heapPtr = calloc(strlen(newStr) + 1, sizeof(char));
-                strncpy(heapPtr, newStr, (strlen(newStr) + 1));
-                userCmd->userArgs[argIndex] = heapPtr;
-                argIndex++;
-                userCmd->numArgs++;
             }
         }
+    }
+    // If first token was null, that means no command was entered. Treat is as a comment.
+    else
+    {
+        userCmd->cmd = calloc(strlen("#"), sizeof(char));
+        strncpy(userCmd->cmd, "#", (strlen("#") + 1));
     }
 
     // Check if the last argument is "&", set background flag if so
@@ -201,7 +208,6 @@ struct cmd_elements *getUserInput()
         userCmd->userArgs[userCmd->numArgs - 1] = NULL;
         free(userCmd->userArgs[userCmd->numArgs - 1]);
         userCmd->numArgs--;
-        argIndex--;
     }
 
     return userCmd;
@@ -284,24 +290,30 @@ void chDirCmd(struct cmd_elements *currentCmd)
               *Include any assumptions related to the data
    Returns: Identify and describe return data
 ----------------------------------------------------------------------- */
-int runCommand(struct cmd_elements *currentCmd){
+void runCommand(struct cmd_elements *currentCmd, int *status){
 	
-    printf("In runCommand, received cmd: %s\nArgs: ", currentCmd->cmd);
-
-    int argIndex = 0;
-    while (currentCmd->userArgs[argIndex] != NULL)
-    {
-        printf("%s, ", currentCmd->userArgs[argIndex]);
-        fflush(stdout);
-        argIndex++;
-    }
-    printf("\n");
-    
     // Below is adapted from Canvas: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-process-api-monitoring-child-processes?module_item_id=21835973
     // Accessed 1.29.22
     //TODO - need to populate an array with NULL, arg1, arg2...argn...NULL
-    char *newargv[] = { NULL, currentCmd->userArgs[0], NULL };
-	int childStatus;
+    // char *newargv[currentCmd->numArgs + 2];
+	// int childStatus;
+    char *argsWithFrontBuffer[currentCmd->numArgs + 1];
+
+    for (int i = 0; i < (currentCmd->numArgs + 2); i++)
+    {
+        if (i == 0)
+        {
+            argsWithFrontBuffer[0] = currentCmd->cmd;
+        }
+        else if (i == currentCmd->numArgs + 1)
+        {
+            argsWithFrontBuffer[i] = NULL;
+        }
+        else
+        {
+            argsWithFrontBuffer[i] = currentCmd->userArgs[i - 1];
+        }
+    }
 
 	// Fork a new process
 	pid_t spawnPid = fork();
@@ -311,90 +323,128 @@ int runCommand(struct cmd_elements *currentCmd){
 		perror("fork()\n");
 		exit(1);
 		break;
-	case 0:
-		// In the child process
-		printf("CHILD(%d) running %s command after sleep\n", getpid(), currentCmd->cmd);
+	
+    case 0:
+		// Child process
+		printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
         fflush(stdout);
-        //sleep(5);
-		// Replace the current program with "/bin/ls"
-		execvp(currentCmd->cmd, newargv);
-		// exec only returns if there is an error
+        // sleep(10);
+		
+        execvp(argsWithFrontBuffer[0], argsWithFrontBuffer);
+
+		// exec only returns if there is an error - code below won't be reached unless
+        // there was a problem.
+        // If a command fails because the shell could not find the command to run, 
+        // then the shell will print an error message and set the exit status to 1
 		perror("execvp");
-		exit(2);
+        //*status = 1;
+        exit(1);
 		break;
-	default:
+	
+    default:
 		// In the parent process
 		// Wait for child's termination
-		spawnPid = waitpid(spawnPid, &childStatus, 0);
-		printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
+		spawnPid = waitpid(spawnPid, status, 0);
+			
+        printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(*status));
+        //*status = WEXITSTATUS(childStatus);
+
+        // if (WEXITSTATUS(childStatus) == 0)
+        // {
+        //     printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+        //     *status = 0;
+        // }
+        // else
+        // {
+        //     printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+        //     *status = WEXITSTATUS(childStatus);
+        // }
         fflush(stdout);
-		exit(0);
+
+        if (WIFSIGNALED(*status))
+        {
+			printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(*status));
+            fflush(stdout);
+		}
 		break;
 	} 
+    return;
 }
 
 // Debug printing
 void printCommand(struct cmd_elements *currentCmd)
 {
-    printf("Command Entered: %s\n", currentCmd->cmd);
+    printf("---Command: %s | %d Args: ", currentCmd->cmd, currentCmd->numArgs);
     fflush(stdout);
     int argIndex = 0;
     while (currentCmd->userArgs[argIndex] != NULL)
     {
-        printf("Arg %d: %s\n", argIndex + 1, currentCmd->userArgs[argIndex]);
+        printf("%s, ", currentCmd->userArgs[argIndex]);
         fflush(stdout);
         argIndex++;
     }
-    printf("Input redirect: %s\n", currentCmd->inputFile);
+    printf("\n---Input: %s | Output: %s\n", currentCmd->inputFile, currentCmd->outputFile);
     fflush(stdout);
-    printf("Output redirect: %s\n", currentCmd->outputFile);
-    fflush(stdout);
-    printf("NumArgs: %d\n", currentCmd->numArgs);
-    fflush(stdout);
-    printf("Background (0 for no, 1 for yes): %d\n", currentCmd->background);
+    printf("---Background (0 for no, 1 for yes): %d\n", currentCmd->background);
     fflush(stdout);
 }
 
 
 int main(void)
 {
+    int status = 0;
     int continueProgram = 1;
 
-    while (continueProgram < 5)
+    while (continueProgram)
     {
     
-    struct cmd_elements *currentCmd = getUserInput();
-    
-    // Debug printing
-    printCommand(currentCmd);
+        struct cmd_elements *currentCmd = getUserInput();
+        
+        // Debug printing
+        printCommand(currentCmd);
 
-    if (strcmp(currentCmd->cmd, "exit") == 0)
-    {
-        exitCmd();
-    }
+        if (strcmp(currentCmd->cmd, "#") != 0)
+        {
+            if (strcmp(currentCmd->cmd, "exit") == 0)
+            {
+                exitCmd();
+            }
 
-    if (strcmp(currentCmd->cmd, "cd") == 0)
-    {
-        char buffer[100];
-        int bufsize = 100;
-        char buffer2[100];
-        int bufsize2 = 100;
+            if (strcmp(currentCmd->cmd, "status") == 0)
+            {
+                // Work this into its own function? One for exit status
+                // and one for signal?
+                if (WIFEXITED(status))
+                {
+                    printf("Exit value %d\n", WEXITSTATUS(status));
+                }
+            }
 
-        getcwd(buffer, bufsize);
-        printf("cwd before calling chDirCmd: %s\n", buffer);
-        fflush(stdout);
-        chDirCmd(currentCmd);
-        getcwd(buffer2, bufsize2);
-        printf("cwd after calling chDirCmd: %s\n", buffer2);
-        fflush(stdout);
-        // /Users/mjacq/CS344/
-    }
-    else
-    {
-        runCommand(currentCmd);
-    }
+            else if (strcmp(currentCmd->cmd, "cd") == 0)
+            {
+                char buffer[100];
+                int bufsize = 100;
+                char buffer2[100];
+                int bufsize2 = 100;
 
-    continueProgram++;
+                getcwd(buffer, bufsize);
+                printf("cwd before calling chDirCmd: %s\n", buffer);
+                fflush(stdout);
+                chDirCmd(currentCmd);
+                getcwd(buffer2, bufsize2);
+                printf("cwd after calling chDirCmd: %s\n", buffer2);
+                fflush(stdout);
+                // /Users/mjacq/CS344/cs344_assignment3
+            }
+            else
+            {
+                runCommand(currentCmd, &status);
+            }
+
+            // TODO - Dispaying every time for debugging, work into own function
+            printf("Status holds: %d\n", status);
+            fflush(stdout);
+        }
     }
 
     return 0;
