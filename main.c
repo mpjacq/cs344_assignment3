@@ -19,7 +19,12 @@
 
 #define MAX_CMD_LENGTH 2048
 
-   /* functionName -----------------------------------------------------------
+/* Globals ---------------------------------- */
+pid_t bgPIDs[200] = {0};    // Ed post advised 200 background processes max
+int bgPIDsSize = 0;
+/* ------------------------------------------- */
+
+/* functionName -----------------------------------------------------------
    Description: Purpose and general use of the function t/o the application
    Arguments: Identify and describe all arguments
               *Include any assumptions related to the data
@@ -45,6 +50,102 @@ struct cmd_elements
 
 };
 
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void addBgPID(pid_t pid)
+{
+    // Cycle through the array till you find an empty spot
+    int foundNull = 0;
+    int index = 0;
+
+    while (foundNull == 0 && index < 200)
+    {
+        if (bgPIDs[index] == 0)
+        {
+            // Add PID by replacing NULL with PID
+            bgPIDs[index] = pid;
+            foundNull++;
+        }
+        index++;
+    }
+    
+    // If no spot was found, print message
+    if (foundNull == 0)
+    {
+        printf("Background PID array is full, %d not added.\n", pid);
+        fflush(stdout);
+    }
+    else
+    {
+        // Increment size tracker
+        bgPIDsSize++;
+    }
+    return;
+}
+
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void removeBgPID(pid_t pid)
+{
+    // Cycle through the array till you find the matching element
+    int found = 0;
+    int index = 0;
+
+    while (found == 0 && index < 200)
+    {
+        if (bgPIDs[index] == pid)
+        {
+            // Remove PID by replacing with 0
+            bgPIDs[index] = 0;
+            found++;
+        }
+        index++;
+    }
+
+    // If no match was found, print message
+    if (found == 0)
+    {
+        printf("No background PID found for %d, not removed.\n", pid);
+        fflush(stdout);
+    }
+    else
+    {
+        // Decrement size tracker
+        bgPIDsSize--;
+    }
+    return;
+}
+
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void displayBgTracker()
+{
+    for (int i = 0; i < 200; i++)
+    {
+        if (bgPIDs[i] != 0)
+        {
+            printf("[%d]: %d ", i, bgPIDs[i]);
+            fflush(stdout);
+        }
+    }
+    printf("\nDone printing, size of array is %d/200.\n", bgPIDsSize);
+    fflush(stdout);
+    return;
+}
 
 /* functionName -----------------------------------------------------------
    Description: Purpose and general use of the function t/o the application
@@ -296,7 +397,7 @@ void runCommand(struct cmd_elements *currentCmd, int *status){
     // Accessed 1.29.22
     //TODO - need to populate an array with NULL, arg1, arg2...argn...NULL
     // char *newargv[currentCmd->numArgs + 2];
-	// int childStatus;
+	int childStatus;
     char *argsWithFrontBuffer[currentCmd->numArgs + 1];
 
     for (int i = 0; i < (currentCmd->numArgs + 2); i++)
@@ -315,6 +416,9 @@ void runCommand(struct cmd_elements *currentCmd, int *status){
         }
     }
 
+    printf("Parent %d about to fork...\n", getpid());
+    fflush(stdout);
+
 	// Fork a new process
 	pid_t spawnPid = fork();
 
@@ -326,8 +430,8 @@ void runCommand(struct cmd_elements *currentCmd, int *status){
 	
     case 0:
 		// Child process
-		printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
-        fflush(stdout);
+		// printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
+        // fflush(stdout);
         // sleep(10);
 
         // Check for input/output redirection (assignment instructions recommended
@@ -403,36 +507,52 @@ void runCommand(struct cmd_elements *currentCmd, int *status){
         // there was a problem.
         // If a command fails because the shell could not find the command to run, 
         // then the shell will print an error message and set the exit status to 1
-		perror("execvp");
-        //*status = 1;
+		perror(currentCmd->cmd);
+        *status = 1;
         exit(1);
-		break;
 	
     default:
-		// In the parent process
-		// Wait for child's termination
-		spawnPid = waitpid(spawnPid, status, 0);
-			
-        printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(*status));
-        //*status = WEXITSTATUS(childStatus);
-
-        // if (WEXITSTATUS(childStatus) == 0)
-        // {
-        //     printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
-        //     *status = 0;
-        // }
-        // else
-        // {
-        //     printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
-        //     *status = WEXITSTATUS(childStatus);
-        // }
-        fflush(stdout);
-
-        if (WIFSIGNALED(*status))
+		
+        // Are we supposed to run this in the background?
+        if (currentCmd->background == 1)
         {
-			printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(*status));
+            printf("Background PID is %d\n", spawnPid);
             fflush(stdout);
-		}
+            // The act of calling wait to reap the exit status is itself what
+            // recovers a zombie process.
+            // If the background process was terminated super fast, we can go ahead and reap
+            // Otherwise, using WNOHANG lets the program continue on (will return 0)
+            pid_t backgoundChild = waitpid(spawnPid, &childStatus, WNOHANG);
+		    printf("Background branch with NOHANG: parent waitpid returned %d\n", backgoundChild);
+            fflush(stdout);
+
+            // If we didn't collect the child PID because it wasn't finished,
+            // we need to add its PID to the tracker so we can check on it later
+            if (backgoundChild == 0)
+            {
+                addBgPID(spawnPid);
+            }
+        }
+		// If foreground, wait for child's termination
+        else
+        {
+            spawnPid = waitpid(spawnPid, &childStatus, 0);
+            printf("waitpid returned value %d\n", spawnPid);
+            fflush(stdout);
+                
+            if (WIFEXITED(childStatus))
+            {
+                printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+                *status = WEXITSTATUS(childStatus);
+                fflush(stdout);
+            } 
+            else if (WIFSIGNALED(childStatus))
+            {
+                printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
+                *status = WTERMSIG(childStatus);
+                fflush(stdout);
+            }
+        }
 		break;
 	} 
     return;
@@ -457,6 +577,55 @@ void printCommand(struct cmd_elements *currentCmd)
 }
 
 
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void checkBackground()
+{
+        // Your parent shell will need to periodically check for the background child 
+        // processes to complete, so that they can be cleaned up, as the shell continues 
+        // to run and process commands. The time to print out when these background 
+        // processes have completed is just BEFORE command line access and control 
+        // are returned to the user, every time that happens.
+        pid_t bkgPID;
+        pid_t waitResult;
+        int status;
+        // int found = 0;
+        int index = 0;
+        
+        if (bgPIDsSize > 0)
+        {
+            // use wait to check if there is a PID waiting to be claimed 
+            // in the background. if it is 0, there is nothing waiting.
+            // otherwise use the PID returned and remove from tracker.
+            printf("Checking for background processes\n");
+            fflush(stdout);
+            
+            while (index < 200)
+            {
+                if (bgPIDs[index] != 0)
+                {
+                    bkgPID = bgPIDs[index];
+                    printf("Found a background process %d to check for\n", bkgPID);
+                    fflush(stdout);
+
+                    waitResult = waitpid(bkgPID, &status, WNOHANG);
+
+                    if (waitResult != 0)
+                    {
+                        printf("Background process %d exited, status %d\n", bkgPID, status);
+                        fflush(stdout);
+                        removeBgPID(bkgPID);
+                    }
+                }
+                index++;
+            }           
+        }
+}
+
 int main(void)
 {
     int status = 0;
@@ -464,11 +633,15 @@ int main(void)
 
     while (continueProgram)
     {
-    
+        // Check status of tracked background processes
+        checkBackground();
+
+        // Get new command
         struct cmd_elements *currentCmd = getUserInput();
         
         // Debug printing
         printCommand(currentCmd);
+        fflush(stdout);
 
         if (strcmp(currentCmd->cmd, "#") != 0)
         {
@@ -481,10 +654,8 @@ int main(void)
             {
                 // Work this into its own function? One for exit status
                 // and one for signal?
-                if (WIFEXITED(status))
-                {
-                    printf("Exit value %d\n", WEXITSTATUS(status));
-                }
+                printf("Exit value %d\n", status);
+                fflush(stdout);
             }
 
             else if (strcmp(currentCmd->cmd, "cd") == 0)
@@ -507,10 +678,6 @@ int main(void)
             {
                 runCommand(currentCmd, &status);
             }
-
-            // TODO - Dispaying every time for debugging, work into own function
-            printf("Status holds: %d\n", status);
-            fflush(stdout);
         }
     }
 
