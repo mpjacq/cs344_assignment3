@@ -22,6 +22,10 @@
 /* Globals ---------------------------------- */
 pid_t bgPIDs[200] = {0};    // Ed post advised 200 background processes max
 int bgPIDsSize = 0;
+int fgToggle = 0;               // 0 = foreground only mode OFF, 1 = foreground only ON
+// Initialize SIGINT_action struct to be empty
+struct sigaction SIGINT_action = {0};
+struct sigaction SIGTSTP_action = {0};
 /* ------------------------------------------- */
 
 /* functionName -----------------------------------------------------------
@@ -31,6 +35,24 @@ int bgPIDsSize = 0;
    Returns: Identify and describe return data
 ----------------------------------------------------------------------- */
 
+void handleSIGTSTP()
+{
+    // If foreground mode not on, turn on
+    if (fgToggle == 0)
+    {
+        fgToggle = 1;
+        // Display message immediately if at prompt or after current processes terminate
+        char *fgOn = "\nEntering foreground-only mode (& is now ignored)\n";
+        write(STDOUT_FILENO, fgOn, 51);
+    }
+    else if (fgToggle == 1)
+    {
+        fgToggle = 0;
+        // Display message immediately if at prompt or after current processes terminate
+        char *fgOff = "\nExiting foreground-only mode\n";
+        write(STDOUT_FILENO, fgOff, 31);
+    }
+}
 
 // The general syntax of a command line is:
 // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
@@ -181,7 +203,7 @@ void checkBackground()
 
                     if (WIFEXITED(bkgStatus))
                     {
-                        printf("Background PID %d is done: exited value %d\n", bkgPID, WEXITSTATUS(bkgStatus));
+                        printf("Background PID %d is done: exit value %d\n", bkgPID, WEXITSTATUS(bkgStatus));
                         fflush(stdout);
                         removeBgPID(bkgPID);
                     } 
@@ -216,24 +238,27 @@ struct cmd_elements *getUserInput()
     char userInput[MAX_CMD_LENGTH * sizeof(char)];
     char *u = userInput;
     size_t buflen = MAX_CMD_LENGTH;
-    ssize_t charsRead;
+    ssize_t charsRead = 0;
 
-    // Use the colon : symbol as a prompt for each command line. 
-    // Flush out the output buffers each time you print
-    printf(": ");
-    fflush(stdout);
-
-    // The general syntax of a command line is:
-    // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
-    charsRead = getline(&u, &buflen, stdin);
-
-    // Check if getline was successful, it will return -1 if not
-    if (charsRead == -1)
+    while (charsRead <= 0)
     {
-        // TODO - decide how to properly handle this error
-        printf("Could not read input, getline error\n");
+        // Use the colon : symbol as a prompt for each command line. 
+        // Flush out the output buffers each time you print
+        printf(": ");
         fflush(stdout);
-        exit(1);
+
+        // The general syntax of a command line is:
+        // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
+        
+        charsRead = getline(&u, &buflen, stdin);
+
+        // Check if getline was successful, it will return -1 if not
+        // Will also return -1 if interrupted by Ctrl-Z (SIGTSTP), so
+        // need to clear error and re-prompt for command
+        if (charsRead == -1)
+        {
+            clearerr(stdin);
+        }
     }
 
     // getline leaves newline in input, remove this
@@ -554,6 +579,19 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             // fflush(stdout);
             // sleep(10);
 
+            // SIGNAL HANDLING ----------------------------
+            // Child FOREGROUND process should no longer ignore SIGINT (Ctrl-C) 
+            // and should TERMINATE ITSELF upon receipt of this signal.
+            // (Background children should still ignore Ctrl-C)
+            if (currentCmd->background == 0)
+            {
+                SIGINT_action.sa_handler = SIG_DFL;         // Restore default behavior
+	            sigaction(SIGINT, &SIGINT_action, NULL);    // Install
+            }
+            // Both foreground and and background children should ignore SIGTSTP (Ctrl-Z)
+            SIGTSTP_action.sa_handler = SIG_IGN;
+            sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
             // Check for input/output redirection (assignment instructions recommended
             // handling this in the CHILD process)
             // Note that after using dup2() to set up the redirection, the redirection 
@@ -589,7 +627,7 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
         default:
             
             // Are we supposed to run this in the background?
-            if (currentCmd->background == 1)
+            if (currentCmd->background == 1 && fgToggle == 0)
             {
                 // Keep this - required output - see example
                 printf("Background PID is %d\n", spawnPid);
@@ -614,26 +652,28 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             else
             {
                 spawnPid = waitpid(spawnPid, &childStatus, 0);
-                printf("waitpid returned value %d\n", spawnPid);
-                fflush(stdout);
+                // printf("waitpid returned value %d\n", spawnPid);
+                // fflush(stdout);
                     
                 if (WIFEXITED(childStatus))
                 {
-                    printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+                    // printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+                    // fflush(stdout);
                     *status = WEXITSTATUS(childStatus);
                     *statusType = 0;
-                    fflush(stdout);
                 } 
+                // If a child foreground process is killed by a signal, the parent must immediately 
+                // print out the number of the signal that killed it's foreground child process 
+                // before prompting the user for the next command.
                 else if (WIFSIGNALED(childStatus))
                 {
-                    printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
-                    // TODO - make sure this updates to the terminating signal (may not just be 1 or 0)
+                    printf("Terminated by signal %d\n", WTERMSIG(childStatus));
                     *status = WTERMSIG(childStatus);
                     *statusType = 1;
                     fflush(stdout);
                 }
             }
-		    break;
+            break;
 	} 
     return;
 }
@@ -663,6 +703,23 @@ int main(void)
     int statusType = 0;         // 0 = exit code, 1 = signal
     int continueProgram = 1;
 
+    // SIGNAL HANDLING ----------------------------------------------
+	// SIGINT handling: parent shell should ignore SIGINT
+	SIGINT_action.sa_handler = SIG_IGN;
+	sigfillset(&SIGINT_action.sa_mask);
+	// No flags set
+	SIGINT_action.sa_flags = 0;
+	// Install our signal handler
+	sigaction(SIGINT, &SIGINT_action, NULL);
+
+    // SIGTSTP signal handling
+    SIGTSTP_action.sa_handler = handleSIGTSTP;
+    sigfillset(&SIGTSTP_action.sa_mask);
+    SIGTSTP_action.sa_flags = 0;
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+    // --------------------------------------------------------------
+
     while (continueProgram)
     {
         // Get new command
@@ -672,7 +729,7 @@ int main(void)
         // printCommand(currentCmd);
         // fflush(stdout);
 
-        if (strcmp(currentCmd->cmd, "#") != 0)
+        if (strncmp(currentCmd->cmd, "#", 1) != 0)
         {
             if (strcmp(currentCmd->cmd, "exit") == 0)
             {
