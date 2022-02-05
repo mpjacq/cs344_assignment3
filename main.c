@@ -1,7 +1,7 @@
 /* Author: Madeline Jacques (jacquema@oregonstate.edu)
    CS 344 W 22 Assignment 3
    Due Date: 2/7/22
-   Last Updated: 1/27/22
+   Last Updated: 2/5/22
    Description: TODO */
 
 #include <stdio.h>
@@ -31,9 +31,7 @@ int bgPIDsSize = 0;
    Returns: Identify and describe return data
 ----------------------------------------------------------------------- */
 
-// Consider defining a struct in which you can store all the different elements 
-// included in a command. Then as you parse a command, you can set the value of 
-// members of a variable of this struct type.
+
 // The general syntax of a command line is:
 // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
 // …where items in square brackets are optional.
@@ -59,30 +57,27 @@ struct cmd_elements
 void addBgPID(pid_t pid)
 {
     // Cycle through the array till you find an empty spot
-    int foundNull = 0;
+    int found = 0;
     int index = 0;
 
-    while (foundNull == 0 && index < 200)
+    while (found == 0 && index < 200)
     {
         if (bgPIDs[index] == 0)
         {
-            // Add PID by replacing NULL with PID
-            bgPIDs[index] = pid;
-            foundNull++;
+            bgPIDs[index] = pid;    // Add PID by replacing 0 with PID
+            found++;
         }
         index++;
     }
-    
     // If no spot was found, print message
-    if (foundNull == 0)
+    if (found == 0)
     {
         printf("Background PID array is full, %d not added.\n", pid);
         fflush(stdout);
     }
     else
     {
-        // Increment size tracker
-        bgPIDsSize++;
+        bgPIDsSize++;     // Increment size tracker
     }
     return;
 }
@@ -96,21 +91,19 @@ void addBgPID(pid_t pid)
 ----------------------------------------------------------------------- */
 void removeBgPID(pid_t pid)
 {
-    // Cycle through the array till you find the matching element
     int found = 0;
     int index = 0;
 
+    // Cycle through the array till you find the matching PID
     while (found == 0 && index < 200)
     {
         if (bgPIDs[index] == pid)
         {
-            // Remove PID by replacing with 0
-            bgPIDs[index] = 0;
+            bgPIDs[index] = 0;      // Remove PID by replacing with 0
             found++;
         }
         index++;
     }
-
     // If no match was found, print message
     if (found == 0)
     {
@@ -119,8 +112,7 @@ void removeBgPID(pid_t pid)
     }
     else
     {
-        // Decrement size tracker
-        bgPIDsSize--;
+        bgPIDsSize--;       // Decrement size tracker
     }
     return;
 }
@@ -164,17 +156,13 @@ void checkBackground()
     pid_t bkgPID;
     pid_t waitResult;
     int bkgStatus;
-    // int found = 0;
     int index = 0;
     
     if (bgPIDsSize > 0)
     {
         // use wait to check if there is a PID waiting to be claimed 
         // in the background. if it is 0, there is nothing waiting.
-        // otherwise use the PID returned and remove from tracker.
-        // printf("Checking for background processes\n");
-        // fflush(stdout);
-        
+        // otherwise use the PID returned and remove from tracker.        
         while (index < 200)
         {
             if (bgPIDs[index] != 0)
@@ -239,29 +227,14 @@ struct cmd_elements *getUserInput()
     // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
     charsRead = getline(&u, &buflen, stdin);
 
-    // Check status of tracked background processes, print any completed
-    checkBackground();
-
     // Check if getline was successful, it will return -1 if not
     if (charsRead == -1)
     {
         // TODO - decide how to properly handle this error
         printf("Could not read input, getline error\n");
         fflush(stdout);
-        exit(0);
+        exit(1);
     }
-    // // Check for blank input (/n or /0 = 1 char)
-    // if (charsRead < 2)
-    // {
-    //     // TODO - decide how to properly handle this error
-    //     printf("Blank entry\n");
-    //     fflush(stdout);
-    // }
-    // else 
-    // {
-    //     // getline leaves newline in input, remove this
-    //     userInput[strlen(userInput)-1] = '\0';
-    // }
 
     // getline leaves newline in input, remove this
     userInput[strlen(userInput)-1] = '\0';
@@ -376,9 +349,8 @@ struct cmd_elements *getUserInput()
         free(userCmd->userArgs[userCmd->numArgs - 1]);
         userCmd->numArgs--;
     }
-
+    
     return userCmd;
-
 }
 
 
@@ -391,6 +363,8 @@ struct cmd_elements *getUserInput()
 void exitCmd()
 {
     // TODO - make sure this kills all child processes of the parent
+    // Free dynamically allocated mem of command?
+    // Check for incomplete background processes
     exit(0);
 }
 
@@ -443,9 +417,95 @@ void chDirCmd(struct cmd_elements *currentCmd)
             chdir(targetDir);
         }
     }
-    // The getcwd() function copies an absolute pathname of the current
-    //    working directory to the array pointed to by buf, which is of
-    //    length size. (https://man7.org/linux/man-pages/man3/getcwd.3.html)
+}
+
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void inputRedirect(struct cmd_elements *currentCmd)
+{
+    int inFile = 0;
+    // An input file redirected via stdin should be opened for reading only; 
+    // if your shell cannot open the file for reading, it should print an error 
+    // message and set the exit status to 1 (but don't exit the shell).
+    if (currentCmd->background == 0)
+    {
+        inFile = open(currentCmd->inputFile, O_RDONLY);
+    }
+    else
+    {
+        inFile = open("/dev/null", O_RDONLY);
+    }
+    // Check if error
+    if (inFile == -1)
+    {
+        printf("Cannot open %s for input.\n", currentCmd->inputFile);
+        fflush(stdout);
+        exit(1);
+    }
+    // If no error, use dup2() to set up redirection
+    // inFile will contain the file descriptor
+    else
+    {
+        int dupInResult = dup2(inFile, 0);
+        // Check for error - returns -1 on error
+        if (dupInResult == -1)
+        {
+            printf("Cannot redirect %s for input.\n", currentCmd->inputFile);
+            fflush(stdout);
+            exit(1);
+        }
+    }
+}
+
+
+/* functionName -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void outputRedirect(struct cmd_elements *currentCmd)
+{
+    // Similarly, an output file redirected via stdout should be opened 
+    // for writing only; it should be truncated if it already exists or 
+    // created if it does not exist. If your shell cannot open the output 
+    // file it should print an error message and set the exit status to 1 
+    // (but don't exit the shell).
+    int outFile = 0;
+
+    if (currentCmd->background == 0)
+    {
+       outFile = open(currentCmd->outputFile, O_CREAT | O_WRONLY | O_TRUNC, 0777);
+    }
+    else
+    {
+        outFile = open("/dev/null", O_CREAT | O_WRONLY | O_TRUNC, 0777);
+    }
+    // Check if error
+    if (outFile == -1)
+    {
+        printf("Cannot open %s for output.\n", currentCmd->outputFile);
+        fflush(stdout);
+        exit(1);
+    }
+    // If no error, use dup2() to set up redirection
+    // outFile will contain the file descriptor
+    else
+    {
+        int dupOutResult = dup2(outFile, 1);
+        // Check for error - returns -1 on error
+        if (dupOutResult == -1)
+        {
+            printf("Cannot redirect %s for output.\n", currentCmd->outputFile);
+            fflush(stdout);
+            exit(1);
+        }
+    }
 }
 
 
@@ -459,8 +519,6 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
 	
     // Below is adapted from Canvas: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-process-api-monitoring-child-processes?module_item_id=21835973
     // Accessed 1.29.22
-    //TODO - need to populate an array with NULL, arg1, arg2...argn...NULL
-    // char *newargv[currentCmd->numArgs + 2];
 	int childStatus;
     char *argsWithFrontBuffer[currentCmd->numArgs + 1];
 
@@ -483,143 +541,99 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
 	// Fork a new process
 	pid_t spawnPid = fork();
 
-	switch(spawnPid){
-	case -1:
-		perror("fork()\n");
-		exit(1);
-		break;
+	switch(spawnPid)
+    {
+        case -1:
+            perror("fork()\n");
+            exit(1);
+            break;
 	
-    case 0:
-		// Child process
-		// printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
-        // fflush(stdout);
-        // sleep(10);
+        case 0:
+            // Child process
+            // printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
+            // fflush(stdout);
+            // sleep(10);
 
-        // Check for input/output redirection (assignment instructions recommended
-        // handling this in the CHILD process)
-        // Note that after using dup2() to set up the redirection, the redirection 
-        // symbol and redirection destination/source are NOT passed into the exec command
-        // For example, if the command given is ls > junk, then you handle the 
-        // redirection to "junk" with dup2() and then simply pass ls into exec().
+            // Check for input/output redirection (assignment instructions recommended
+            // handling this in the CHILD process)
+            // Note that after using dup2() to set up the redirection, the redirection 
+            // symbol and redirection destination/source are NOT passed into the exec command
+            // For example, if the command given is ls > junk, then you handle the 
+            // redirection to "junk" with dup2() and then simply pass ls into exec().
 
-        if (currentCmd->inputFile != NULL)
-        {
-            // An input file redirected via stdin should be opened for reading only; 
-            // if your shell cannot open the file for reading, it should print an error 
-            // message and set the exit status to 1 (but don't exit the shell).
-            int inFile = open(currentCmd->inputFile, O_RDONLY);
-            // Check if error
-            if (inFile == -1)
+            // If the user doesn't redirect the standard input for a background command, 
+            // then standard input should be redirected to /dev/null
+            if ((currentCmd->background == 0 && currentCmd->inputFile != NULL) || 
+                (currentCmd->background == 1 && currentCmd->inputFile == NULL))
             {
-                printf("Cannot open %s for input.\n", currentCmd->inputFile);
-                fflush(stdout);
-                exit(1);
+                inputRedirect(currentCmd);
             }
-            // If no error, use dup2() to set up redirection
-            // inFile will contain the file descriptor
-            else
+            // If the user doesn't redirect the standard output for a background command, 
+            // then standard output should be redirected to /dev/null
+            if ((currentCmd->background == 0 && currentCmd->outputFile != NULL) ||
+                (currentCmd->background == 1 && currentCmd->outputFile == NULL))
             {
-                int dupInResult = dup2(inFile, 0);
-                // Check for error - returns -1 on error
-                if (dupInResult == -1)
-                {
-                    printf("Cannot redirect %s for input.\n", currentCmd->inputFile);
-                    fflush(stdout);
-                    exit(1);
-                }
+                outputRedirect(currentCmd);
             }
-
-        }
-
-        if (currentCmd->outputFile != NULL)
-        {
-            // Similarly, an output file redirected via stdout should be opened 
-            // for writing only; it should be truncated if it already exists or 
-            // created if it does not exist. If your shell cannot open the output 
-            // file it should print an error message and set the exit status to 1 
-            // (but don't exit the shell).
-            int outFile = open(currentCmd->outputFile, O_CREAT | O_WRONLY | O_TRUNC, 0777);
-            // Check if error
-            if (outFile == -1)
-            {
-                printf("Cannot open %s for output.\n", currentCmd->outputFile);
-                fflush(stdout);
-                exit(1);
-            }
-            // If no error, use dup2() to set up redirection
-            // outFile will contain the file descriptor
-            else
-            {
-                int dupOutResult = dup2(outFile, 1);
-                // Check for error - returns -1 on error
-                if (dupOutResult == -1)
-                {
-                    printf("Cannot redirect %s for output.\n", currentCmd->outputFile);
-                    fflush(stdout);
-                    exit(1);
-                }
-            }
-
-        }
-		
-        execvp(argsWithFrontBuffer[0], argsWithFrontBuffer);
-
-		// exec only returns if there is an error - code below won't be reached unless
-        // there was a problem.
-        // If a command fails because the shell could not find the command to run, 
-        // then the shell will print an error message and set the exit status to 1
-		perror(currentCmd->cmd);
-        *status = 1;
-        exit(1);
-	
-    default:
-		
-        // Are we supposed to run this in the background?
-        if (currentCmd->background == 1)
-        {
-            // Keep this - required output - see example
-            printf("Background PID is %d\n", spawnPid);
-            fflush(stdout);
             
-            // The act of calling wait to reap the exit status is itself what
-            // recovers a zombie process.
-            // If the background process was terminated super fast, we can go ahead and reap
-            // Otherwise, using WNOHANG lets the program continue on (will return 0)
-            pid_t backgoundChild = waitpid(spawnPid, &childStatus, WNOHANG);
-		    printf("Background branch with NOHANG: parent waitpid returned %d\n", backgoundChild);
-            fflush(stdout);
+            execvp(argsWithFrontBuffer[0], argsWithFrontBuffer);
 
-            // If we didn't collect the child PID because it wasn't finished,
-            // we need to add its PID to the tracker so we can check on it later
-            if (backgoundChild == 0)
+            // exec only returns if there is an error - code below won't be reached unless
+            // there was a problem.
+            // If a command fails because the shell could not find the command to run, 
+            // then the shell will print an error message and set the exit status to 1
+            perror(currentCmd->cmd);
+            *status = 1;
+            exit(1);
+	
+        default:
+            
+            // Are we supposed to run this in the background?
+            if (currentCmd->background == 1)
             {
-                addBgPID(spawnPid);
-            }
-        }
-		// If foreground, wait for child's termination
-        else
-        {
-            spawnPid = waitpid(spawnPid, &childStatus, 0);
-            printf("waitpid returned value %d\n", spawnPid);
-            fflush(stdout);
+                // Keep this - required output - see example
+                printf("Background PID is %d\n", spawnPid);
+                fflush(stdout);
                 
-            if (WIFEXITED(childStatus))
-            {
-                printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
-                *status = WEXITSTATUS(childStatus);
-                *statusType = 0;
+                // The act of calling wait to reap the exit status is itself what
+                // recovers a zombie process.
+                // If the background process was terminated super fast, we can go ahead and reap
+                // Otherwise, using WNOHANG lets the program continue on (will return 0)
+                pid_t backgoundChild = waitpid(spawnPid, &childStatus, WNOHANG);
+                printf("Background branch with NOHANG: parent waitpid returned %d\n", backgoundChild);
                 fflush(stdout);
-            } 
-            else if (WIFSIGNALED(childStatus))
-            {
-                printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
-                // TODO - make sure this updates to the terminating signal (may not just be 1 or 0)
-                *status = WTERMSIG(childStatus);
-                *statusType = 1;
-                fflush(stdout);
+
+                // If we didn't collect the child PID because it wasn't finished,
+                // we need to add its PID to the tracker so we can check on it later
+                if (backgoundChild == 0)
+                {
+                    addBgPID(spawnPid);
+                }
             }
-        }
-		break;
+            // If foreground, wait for child's termination
+            else
+            {
+                spawnPid = waitpid(spawnPid, &childStatus, 0);
+                printf("waitpid returned value %d\n", spawnPid);
+                fflush(stdout);
+                    
+                if (WIFEXITED(childStatus))
+                {
+                    printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+                    *status = WEXITSTATUS(childStatus);
+                    *statusType = 0;
+                    fflush(stdout);
+                } 
+                else if (WIFSIGNALED(childStatus))
+                {
+                    printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
+                    // TODO - make sure this updates to the terminating signal (may not just be 1 or 0)
+                    *status = WTERMSIG(childStatus);
+                    *statusType = 1;
+                    fflush(stdout);
+                }
+            }
+		    break;
 	} 
     return;
 }
@@ -651,12 +665,6 @@ int main(void)
 
     while (continueProgram)
     {
-        // Check status of tracked background processes
-        // The message about any completed bg procs should appear AFTER
-        // the user enters their next line of input, so I tried moving
-        // this to the getUserInput function...
-        // checkBackground();
-
         // Get new command
         struct cmd_elements *currentCmd = getUserInput();
         
@@ -709,6 +717,10 @@ int main(void)
                 runCommand(currentCmd, &status, &statusType);
             }
         }
+        // The time to print out when these background processes have completed 
+        // is just BEFORE command line access and control are returned to the user, 
+        // every time that happens.
+        checkBackground();
     }
 
     return 0;
