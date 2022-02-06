@@ -262,7 +262,10 @@ struct cmd_elements *getUserInput()
     }
 
     // getline leaves newline in input, remove this
-    userInput[strlen(userInput)-1] = '\0';
+    if (charsRead > 0)
+    {
+        userInput[strlen(userInput)-1] = '\0';
+    }
 
     // Create a command struct to store data about the command entered
     struct cmd_elements *userCmd = malloc(sizeof(struct cmd_elements));
@@ -270,8 +273,14 @@ struct cmd_elements *getUserInput()
     // Initialize all userArgs elements to NULL
     for (int i = 0; i < 512; i++)
     {
-        userCmd->userArgs[i] = (char *) NULL;
+        userCmd->userArgs[i] = NULL;
     }
+    
+    // Initialize in/out files to NULL
+    userCmd->inputFile = NULL;
+    userCmd->outputFile = NULL;
+    userCmd->numArgs = 0;
+    userCmd->background = 0;
 
      // Extract the command elements
     char *saveptr;
@@ -365,14 +374,16 @@ struct cmd_elements *getUserInput()
     }
 
     // Check if the last argument is "&", set background flag if so
-    if (strcmp(userCmd->userArgs[userCmd->numArgs - 1], "&") == 0)
+    if (userCmd->numArgs > 0)
     {
-        userCmd->background = 1;
-        // This also cuts off any args entered after & which should not be
-        // considered valid anyways.
-        userCmd->userArgs[userCmd->numArgs - 1] = NULL;
-        free(userCmd->userArgs[userCmd->numArgs - 1]);
-        userCmd->numArgs--;
+        if (userCmd->userArgs[userCmd->numArgs - 1][0] == '&' && strlen(userCmd->userArgs[userCmd->numArgs - 1]) == 1)
+        {
+            userCmd->background = 1;
+            // This also cuts off any args entered after & which should not be
+            // considered valid anyways.
+            userCmd->userArgs[userCmd->numArgs - 1] = NULL;
+            userCmd->numArgs--;
+        }
     }
     
     return userCmd;
@@ -621,6 +632,7 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             // If a command fails because the shell could not find the command to run, 
             // then the shell will print an error message and set the exit status to 1
             perror(currentCmd->cmd);
+            fflush(stdout);
             *status = 1;
             exit(1);
 	
@@ -630,7 +642,7 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             if (currentCmd->background == 1 && fgToggle == 0)
             {
                 // Keep this - required output - see example
-                printf("Background PID is %d\n", spawnPid);
+                printf("Background PID is %d, command %s\n", spawnPid, currentCmd->cmd);
                 fflush(stdout);
                 
                 // The act of calling wait to reap the exit status is itself what
@@ -638,8 +650,6 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
                 // If the background process was terminated super fast, we can go ahead and reap
                 // Otherwise, using WNOHANG lets the program continue on (will return 0)
                 pid_t backgoundChild = waitpid(spawnPid, &childStatus, WNOHANG);
-                printf("Background branch with NOHANG: parent waitpid returned %d\n", backgoundChild);
-                fflush(stdout);
 
                 // If we didn't collect the child PID because it wasn't finished,
                 // we need to add its PID to the tracker so we can check on it later
@@ -729,21 +739,27 @@ int main(void)
         // printCommand(currentCmd);
         // fflush(stdout);
 
-        if (strncmp(currentCmd->cmd, "#", 1) != 0)
+        if (currentCmd->cmd[0] != '#')
         {
             if (strcmp(currentCmd->cmd, "exit") == 0)
             {
+                // Ignore background setting for built-ins
+                currentCmd->background = 0;
+                // Clean up memory before calling exit - either put in
+                // exit fc or make cleanup its own fc.
                 exitCmd();
             }
 
             if (strcmp(currentCmd->cmd, "status") == 0)
             {
+                // Ignore background setting for built-ins
+                currentCmd->background = 0;
                 // Work this into its own function? One for exit status
                 // and one for signal?
                 // Status only tracks foreground processes! 
                 if (statusType == 0)
                 {
-                    printf("Exit status %d\n", status);
+                    printf("Exit value %d\n", status);
                     fflush(stdout);
                 }
                 else if (statusType == 1)
@@ -760,14 +776,12 @@ int main(void)
                 char buffer2[100];
                 int bufsize2 = 100;
 
+                // Ignore background setting for built-ins
+                currentCmd->background = 0;
+
                 getcwd(buffer, bufsize);
-                printf("cwd before calling chDirCmd: %s\n", buffer);
-                fflush(stdout);
                 chDirCmd(currentCmd);
                 getcwd(buffer2, bufsize2);
-                printf("cwd after calling chDirCmd: %s\n", buffer2);
-                fflush(stdout);
-                // /Users/mjacq/CS344/cs344_assignment3
             }
             else
             {
@@ -778,6 +792,33 @@ int main(void)
         // is just BEFORE command line access and control are returned to the user, 
         // every time that happens.
         checkBackground();
+
+        // // Free memory - parts of command struct are dynamically allocated
+        if (currentCmd->cmd != NULL)
+        {
+            free(currentCmd->cmd);
+        }
+        if (currentCmd->numArgs > 0)
+        {
+            // currentCmd->userArgs array itself was not dynamically allocated,
+            // but its contents were
+            for (int i = 0; i < currentCmd->numArgs; i++)
+            {
+                if (currentCmd->userArgs[i] != NULL)
+                {
+                    free(currentCmd->userArgs[i]);
+                }
+            }
+        }
+        if (currentCmd->inputFile)
+        {
+            free(currentCmd->inputFile);
+        }
+        if (currentCmd->outputFile)
+        {
+            free(currentCmd->outputFile);
+        }
+        free(currentCmd);
     }
 
     return 0;
