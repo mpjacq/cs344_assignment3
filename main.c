@@ -1,8 +1,24 @@
 /* Author: Madeline Jacques (jacquema@oregonstate.edu)
-   CS 344 W 22 Assignment 3
+   CS 344 W 22 Assignment 3 (Portfolio Project)
    Due Date: 2/7/22
-   Last Updated: 2/5/22
-   Description: TODO */
+   Last Updated: 2/7/22
+   Description: smallsh is a scaled down shell built in C. It has a subset
+                of the features in a shell such as bash. The main things
+                smallsh can do are:
+                1) Provide a prompt for running commands
+                2) Handle blank lines and comments (# this is a comment)
+                3) Provide variable expansion for the variable $$
+                4) Execute 3 commands via code built into the shell
+                    - exit: exits the shell, cleans up processes
+                    - cd: changes directory
+                    - status: reports exit status or termination code
+                      of last foreground process to complete 
+                5) Execute other commands by creating new processes using 
+                   exec family of functions
+                6) Support input and output redirection
+                7) Support running commands in foreground and background processes
+                8) Implement custom handlers for 2 signals, SIGINT and SIGTSTP
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,19 +38,21 @@
 /* Globals ---------------------------------- */
 pid_t bgPIDs[200] = {0};    // Ed post advised 200 background processes max
 int bgPIDsSize = 0;
-int fgToggle = 0;               // 0 = foreground only mode OFF, 1 = foreground only ON
-// Initialize SIGINT_action struct to be empty
-struct sigaction SIGINT_action = {0};
-struct sigaction SIGTSTP_action = {0};
+int fgToggle = 0;           // 0 = foreground only mode OFF, 1 = foreground only ON
+struct sigaction SIGINT_action = {{0}};   // Initialize SIGxxx_action structs to be empty
+struct sigaction SIGTSTP_action = {{0}};
+int status = 0;             // holds exit/signal value of last forg. proccess to complete
+int statusType = 0;         // 0 = exit, 1 = signal
+int continueProgram = 1;
 /* ------------------------------------------- */
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* handleSIGTSTP -----------------------------------------------------------
+   Description: Custom signal handler for SIGTSTP (Ctrl-z). Toggles foreground
+                only mode on/off when signal received.
+   Arguments: None
+   Returns: Nothing, but prints confirmation message and sets global variable
+            fgToggle which tracks if foreground only mode is on/off.
 ----------------------------------------------------------------------- */
-
 void handleSIGTSTP()
 {
     // If foreground mode not on, turn on
@@ -70,11 +88,13 @@ struct cmd_elements
 
 };
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* addBgPID -----------------------------------------------------------
+   Description: Adds the PID passed as argument to the global array used
+                to track background processes that have been initiated.
+                Adds the PID in the first open spot in the array or returns
+                an error message if the array is full.
+   Arguments: pid_t pid
+   Returns: Nothing, but alters global array bgPIDs
 ----------------------------------------------------------------------- */
 void addBgPID(pid_t pid)
 {
@@ -105,11 +125,13 @@ void addBgPID(pid_t pid)
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* removeBgPID -----------------------------------------------------------
+   Description: Removes the PID passed as argument from the global array used
+                to track background processes that have been initiated.
+                Replaces the PID with a 0 in the array or returns
+                an error message if the PID was not in the array.
+   Arguments: pid_t pid
+   Returns: Nothing, but alters global array bgPIDs
 ----------------------------------------------------------------------- */
 void removeBgPID(pid_t pid)
 {
@@ -140,11 +162,9 @@ void removeBgPID(pid_t pid)
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* displayBgTracker -----------------------------------------------------------
+   Description: Prints the contents of the background process tracking array
+   TODO: Remove before final submission, this was just used for debugging.
 ----------------------------------------------------------------------- */
 void displayBgTracker()
 {
@@ -162,63 +182,52 @@ void displayBgTracker()
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* checkBackground -----------------------------------------------------------
+   Description: Cycles through the background PID tracking array bkgPID and
+                checks if each PID listed has completed. Prints a confirmation
+                message including the PID of the process that has completed
+                as well as the process' exit code or signal.
+                Also removes the completed PID from the tracking array.
+   Arguments: None
+   Returns: Nothing, but prints message to screen
 ----------------------------------------------------------------------- */
 void checkBackground()
 {
-    // Your parent shell will need to periodically check for the background child 
-    // processes to complete, so that they can be cleaned up, as the shell continues 
-    // to run and process commands. The time to print out when these background 
-    // processes have completed is just BEFORE command line access and control 
-    // are returned to the user, every time that happens.
     pid_t bkgPID;
     pid_t waitResult;
     int bkgStatus;
     int index = 0;
     
     if (bgPIDsSize > 0)
-    {
-        // use wait to check if there is a PID waiting to be claimed 
-        // in the background. if it is 0, there is nothing waiting.
-        // otherwise use the PID returned and remove from tracker.        
+    {      
         while (index < 200)
         {
+            // Only check non-zero values of the array
             if (bgPIDs[index] != 0)
             {
                 bkgPID = bgPIDs[index];
-                // printf("Found a background process %d to check for\n", bkgPID);
-                // fflush(stdout);
-
+                // Use wait + WNOHANG to check if a PID is waiting to be claimed 
+                // in the background. If it returns 0, that PID is not done.
+                // Otherwise use the PID returned and remove from tracker.  
                 waitResult = waitpid(bkgPID, &bkgStatus, WNOHANG);
 
                 if (waitResult != 0)
                 {
-                    // printf("Background process %d exited, status %d\n", bkgPID, bkgStatus);
-                    // fflush(stdout);
-                    // removeBgPID(bkgPID);
-
+                    // Background process exited
                     if (WIFEXITED(bkgStatus))
                     {
                         printf("Background PID %d is done: exit value %d\n", bkgPID, WEXITSTATUS(bkgStatus));
                         fflush(stdout);
-                        removeBgPID(bkgPID);
+                        removeBgPID(bkgPID);    // Remove PID from tracker
                     } 
+                    // Background process ended due to a signal
                     else if (WIFSIGNALED(bkgStatus))
                     {
                         printf("Background PID %d is done: terminated by signal %d\n", bkgPID, WTERMSIG(bkgStatus));
                         fflush(stdout);
-                        removeBgPID(bkgPID);
+                        removeBgPID(bkgPID);   // Remove PID from tracker
                     }
                 }
-                // else
-                // {
-                //     printf("Background process %d is not done yet...\n", bkgPID);
-                //     fflush(stdout);
-                // }
             }
             index++;
         }           
@@ -226,15 +235,20 @@ void checkBackground()
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* getUserInput -----------------------------------------------------------
+   Description: Displays shell prompt (: ) and waits for user input. 
+                Parses user input, identifying and storing the command, 
+                any arguments, input and output redirects, and checks if
+                the background flag (&) was used. Replaces any instances
+                of "$$" with the current process PID. The general syntax 
+                of a command line is: 
+                command [arg1 arg2 ...] [< input_file] [> output_file] [&]
+   Arguments: None, prompts for input within function
+   Returns: pointer to cmd_elements struct, which holds the information
+            about any command, arguments, etc. which were just entered.
 ----------------------------------------------------------------------- */
 struct cmd_elements *getUserInput()
 {
-    // char userInput[] = "exit";
     char userInput[MAX_CMD_LENGTH * sizeof(char)];
     char *u = userInput;
     size_t buflen = MAX_CMD_LENGTH;
@@ -247,9 +261,6 @@ struct cmd_elements *getUserInput()
         printf(": ");
         fflush(stdout);
 
-        // The general syntax of a command line is:
-        // command [arg1 arg2 ...] [< input_file] [> output_file] [&]
-        
         charsRead = getline(&u, &buflen, stdin);
 
         // Check if getline was successful, it will return -1 if not
@@ -270,25 +281,24 @@ struct cmd_elements *getUserInput()
     // Create a command struct to store data about the command entered
     struct cmd_elements *userCmd = malloc(sizeof(struct cmd_elements));
     
-    // Initialize all userArgs elements to NULL
+    // Initialize struct values to NULL/zero/etc.
     for (int i = 0; i < 512; i++)
     {
         userCmd->userArgs[i] = NULL;
     }
-    
-    // Initialize in/out files to NULL
     userCmd->inputFile = NULL;
     userCmd->outputFile = NULL;
     userCmd->numArgs = 0;
     userCmd->background = 0;
 
-     // Extract the command elements
+    // Extract the command elements
     char *saveptr;
     char *token = strtok_r(userInput, " \n", &saveptr);
     
     if (token != NULL)
     {
-        userCmd->cmd = calloc(strlen(token) + 1, sizeof(char));   // The first token is the command
+        // The first token is the command
+        userCmd->cmd = calloc(strlen(token) + 1, sizeof(char));
         strncpy(userCmd->cmd, token, (strlen(token) + 1));
 
         int argIndex = 0;
@@ -321,31 +331,32 @@ struct cmd_elements *getUserInput()
                 else
                 {
                     // Check token for $$ variables
-                    char newStr[100];
+                    char newStr[MAX_CMD_LENGTH];
                     int pid = getpid();
                     char pidStr[50];
+                    // Convert to string
                     snprintf(pidStr, sizeof(pidStr), "%d", pid);
                     int tokenLen = strlen(token);
                     int nextIndexNewStr = 0;
-                    //int nextIndexToken = 0;
 
                     // Initialize newStr
-                    for (int n = 0; n < 100; n++)
+                    for (int n = 0; n < MAX_CMD_LENGTH; n++)
                     {
                         newStr[n] = '\0';
                     }
 
                     for (int i = 0; i < tokenLen; i++)
                     {
+                        // Check for 2 $'s in immediate sequence
                         if (token[i] == '$' && token[i + 1] == '$')
                         {
-                            // at next available index of newStr, start writing the variable
+                            // At next available index of newStr, start writing the PID
                             for (int j = 0; j < strlen(pidStr); j++)
                             {
                                 newStr[nextIndexNewStr] = pidStr[j];
                                 nextIndexNewStr++;
                             }
-                            // skip the next char in the token
+                            // Skip the next char in the token
                             i++;
 
                         }
@@ -357,6 +368,7 @@ struct cmd_elements *getUserInput()
                         }
                     }
 
+                    // Store the expanded version as an argument
                     char *heapPtr = calloc(strlen(newStr) + 1, sizeof(char));
                     strncpy(heapPtr, newStr, (strlen(newStr) + 1));
                     userCmd->userArgs[argIndex] = heapPtr;
@@ -378,10 +390,8 @@ struct cmd_elements *getUserInput()
     {
         if (userCmd->userArgs[userCmd->numArgs - 1][0] == '&' && strlen(userCmd->userArgs[userCmd->numArgs - 1]) == 1)
         {
-            userCmd->background = 1;
-            // This also cuts off any args entered after & which should not be
-            // considered valid anyways.
-            userCmd->userArgs[userCmd->numArgs - 1] = NULL;
+            userCmd->background = 1;        // Toggle background flag
+            userCmd->userArgs[userCmd->numArgs - 1] = NULL;     // Remove & from args list
             userCmd->numArgs--;
         }
     }
@@ -390,26 +400,34 @@ struct cmd_elements *getUserInput()
 }
 
 
-/* functionName -----------------------------------------------------------
+/* exitCmd -----------------------------------------------------------
    Description: Purpose and general use of the function t/o the application
    Arguments: Identify and describe all arguments
               *Include any assumptions related to the data
    Returns: Identify and describe return data
 ----------------------------------------------------------------------- */
-void exitCmd()
+void statusCmd()
 {
-    // TODO - make sure this kills all child processes of the parent
-    // Free dynamically allocated mem of command?
-    // Check for incomplete background processes
-    exit(0);
+    // Status only tracked for foreground processes! 
+    if (statusType == 0)
+    {
+        printf("Exit value %d\n", status);
+        fflush(stdout);
+    }
+    else if (statusType == 1)
+    {
+        printf("Terminated by signal %d\n", status);
+        fflush(stdout);
+    }
 }
 
-
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* chDirCmd -----------------------------------------------------------
+   Description: Built-in command to change the current directory. If no
+                argument was passed in the initial user input (just cd)
+                then the home directory will be used as a default.
+   Arguments: Pointer to cmd_elements struct containing information about
+              the current user-entered command.
+   Returns: Nothing, but changes the current directory.
 ----------------------------------------------------------------------- */
 void chDirCmd(struct cmd_elements *currentCmd)
 {    
@@ -456,11 +474,14 @@ void chDirCmd(struct cmd_elements *currentCmd)
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* inputRedirect -----------------------------------------------------------
+   Description: If input redirect was specified as part of the user-entered
+                command, sets up this redirect using dup2. If the user doesn't 
+                redirect the standard input for a background command, then 
+                standard input will be redirected to /dev/null.
+   Arguments: Pointer to cmd_elements struct containing information about
+              the current user-entered command.
+   Returns: Nothing
 ----------------------------------------------------------------------- */
 void inputRedirect(struct cmd_elements *currentCmd)
 {
@@ -499,19 +520,21 @@ void inputRedirect(struct cmd_elements *currentCmd)
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* outputRedirect -----------------------------------------------------------
+   Description: If output redirect was specified as part of the user-entered
+                command, sets up this redirect using dup2. If the user doesn't 
+                redirect the standard output for a background command, then 
+                standard output will be redirected to /dev/null.
+   Arguments: Pointer to cmd_elements struct containing information about
+              the current user-entered command.
+   Returns: Nothing
 ----------------------------------------------------------------------- */
 void outputRedirect(struct cmd_elements *currentCmd)
 {
-    // Similarly, an output file redirected via stdout should be opened 
-    // for writing only; it should be truncated if it already exists or 
-    // created if it does not exist. If your shell cannot open the output 
-    // file it should print an error message and set the exit status to 1 
-    // (but don't exit the shell).
+    // Output file redirected via stdout should be opened write-onlyl
+    // should be truncated if it already exists or created if it does 
+    // not exist. If your shell cannot open the output file it should 
+    // print error message, set the exit status 1 (but don't exit shell)
     int outFile = 0;
 
     if (currentCmd->background == 0)
@@ -545,19 +568,18 @@ void outputRedirect(struct cmd_elements *currentCmd)
 }
 
 
-/* functionName -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
+/* runCommand -----------------------------------------------------------
+   Description: TODO
    Arguments: Identify and describe all arguments
               *Include any assumptions related to the data
    Returns: Identify and describe return data
 ----------------------------------------------------------------------- */
 void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
 	
-    // Below is adapted from Canvas: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-process-api-monitoring-child-processes?module_item_id=21835973
-    // Accessed 1.29.22
 	int childStatus;
     char *argsWithFrontBuffer[currentCmd->numArgs + 1];
 
+    // execvp needs format [cmd, arg1, arg2 ... argn, NULL]
     for (int i = 0; i < (currentCmd->numArgs + 2); i++)
     {
         if (i == 0)
@@ -584,13 +606,10 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             exit(1);
             break;
 	
+        // CHILD PROCESS
         case 0:
-            // Child process
-            // printf("CHILD(%d) attempting to run %s command\n", getpid(), currentCmd->cmd);
-            // fflush(stdout);
-            // sleep(10);
 
-            // SIGNAL HANDLING ----------------------------
+            // SIGNAL HANDLING --------------------------------------------------
             // Child FOREGROUND process should no longer ignore SIGINT (Ctrl-C) 
             // and should TERMINATE ITSELF upon receipt of this signal.
             // (Background children should still ignore Ctrl-C)
@@ -602,23 +621,17 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             // Both foreground and and background children should ignore SIGTSTP (Ctrl-Z)
             SIGTSTP_action.sa_handler = SIG_IGN;
             sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+            // ------------------------------------------------------------------
 
-            // Check for input/output redirection (assignment instructions recommended
-            // handling this in the CHILD process)
-            // Note that after using dup2() to set up the redirection, the redirection 
-            // symbol and redirection destination/source are NOT passed into the exec command
-            // For example, if the command given is ls > junk, then you handle the 
-            // redirection to "junk" with dup2() and then simply pass ls into exec().
-
-            // If the user doesn't redirect the standard input for a background command, 
-            // then standard input should be redirected to /dev/null
+            // If foreground process and input redirect was specified OR
+            // background process and no redirect specified (set to /dev/null)
             if ((currentCmd->background == 0 && currentCmd->inputFile != NULL) || 
                 (currentCmd->background == 1 && currentCmd->inputFile == NULL))
             {
                 inputRedirect(currentCmd);
             }
-            // If the user doesn't redirect the standard output for a background command, 
-            // then standard output should be redirected to /dev/null
+            // If foreground process and output redirect was specified OR
+            // background process and no redirect specified (set to /dev/null)
             if ((currentCmd->background == 0 && currentCmd->outputFile != NULL) ||
                 (currentCmd->background == 1 && currentCmd->outputFile == NULL))
             {
@@ -631,6 +644,7 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             // there was a problem.
             // If a command fails because the shell could not find the command to run, 
             // then the shell will print an error message and set the exit status to 1
+            // and the child process will exit itself.
             perror(currentCmd->cmd);
             fflush(stdout);
             *status = 1;
@@ -638,11 +652,11 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
 	
         default:
             
-            // Are we supposed to run this in the background?
+            // Are we supposed to run this in the background? And are we allowed to?
             if (currentCmd->background == 1 && fgToggle == 0)
             {
-                // Keep this - required output - see example
-                printf("Background PID is %d, command %s\n", spawnPid, currentCmd->cmd);
+                // Confirm background process PID
+                printf("Background PID is %d\n", spawnPid);
                 fflush(stdout);
                 
                 // The act of calling wait to reap the exit status is itself what
@@ -658,17 +672,13 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
                     addBgPID(spawnPid);
                 }
             }
-            // If foreground, wait for child's termination
+            // If foreground, WAIT for child's termination before returning control
             else
             {
                 spawnPid = waitpid(spawnPid, &childStatus, 0);
-                // printf("waitpid returned value %d\n", spawnPid);
-                // fflush(stdout);
                     
                 if (WIFEXITED(childStatus))
                 {
-                    // printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
-                    // fflush(stdout);
                     *status = WEXITSTATUS(childStatus);
                     *statusType = 0;
                 } 
@@ -689,6 +699,7 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
 }
 
 // Debug printing
+// TODO - remove this before final submission
 void printCommand(struct cmd_elements *currentCmd)
 {
     printf("---Command: %s | %d Args: ", currentCmd->cmd, currentCmd->numArgs);
@@ -707,12 +718,70 @@ void printCommand(struct cmd_elements *currentCmd)
 }
 
 
+/* cleanup -----------------------------------------------------------
+   Description: TODO
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void cleanup(struct cmd_elements *currentCmd)
+{
+    // Free memory - parts of command struct are dynamically allocated
+    if (currentCmd->cmd != NULL)
+    {
+        free(currentCmd->cmd);
+    }
+    if (currentCmd->numArgs > 0)
+    {
+        // currentCmd->userArgs array itself was not dynamically allocated,
+        // but its contents were
+        for (int i = 0; i < currentCmd->numArgs; i++)
+        {
+            if (currentCmd->userArgs[i] != NULL)
+            {
+                free(currentCmd->userArgs[i]);
+            }
+        }
+    }
+    if (currentCmd->inputFile)
+    {
+        free(currentCmd->inputFile);
+    }
+    if (currentCmd->outputFile)
+    {
+        free(currentCmd->outputFile);
+    }
+    free(currentCmd);
+}
+
+
+/* exitCmd -----------------------------------------------------------
+   Description: Purpose and general use of the function t/o the application
+   Arguments: Identify and describe all arguments
+              *Include any assumptions related to the data
+   Returns: Identify and describe return data
+----------------------------------------------------------------------- */
+void exitCmd(struct cmd_elements *currentCmd)
+{
+    // TODO - kill in-progress background process
+    // Check if any background processes finished
+    checkBackground();
+    // Kill any remaining children before exiting
+    for (int i = 0; i < 200; i++)
+    {
+        if (bgPIDs[i] != 0)
+        {
+            kill(bgPIDs[i], 9);
+        }
+    }
+    
+    cleanup(currentCmd);
+    exit(0);
+}
+
+
 int main(void)
 {
-    int status = 0;
-    int statusType = 0;         // 0 = exit code, 1 = signal
-    int continueProgram = 1;
-
     // SIGNAL HANDLING ----------------------------------------------
 	// SIGINT handling: parent shell should ignore SIGINT
 	SIGINT_action.sa_handler = SIG_IGN;
@@ -727,61 +796,35 @@ int main(void)
     sigfillset(&SIGTSTP_action.sa_mask);
     SIGTSTP_action.sa_flags = 0;
     sigaction(SIGTSTP, &SIGTSTP_action, NULL);
-
     // --------------------------------------------------------------
 
     while (continueProgram)
     {
         // Get new command
         struct cmd_elements *currentCmd = getUserInput();
-        
-        // Debug printing
-        // printCommand(currentCmd);
-        // fflush(stdout);
 
+        // Is it a not a comment?
         if (currentCmd->cmd[0] != '#')
         {
             if (strcmp(currentCmd->cmd, "exit") == 0)
             {
                 // Ignore background setting for built-ins
                 currentCmd->background = 0;
-                // Clean up memory before calling exit - either put in
-                // exit fc or make cleanup its own fc.
-                exitCmd();
+                exitCmd(currentCmd);
             }
 
-            if (strcmp(currentCmd->cmd, "status") == 0)
+            else if (strcmp(currentCmd->cmd, "status") == 0)
             {
                 // Ignore background setting for built-ins
                 currentCmd->background = 0;
-                // Work this into its own function? One for exit status
-                // and one for signal?
-                // Status only tracks foreground processes! 
-                if (statusType == 0)
-                {
-                    printf("Exit value %d\n", status);
-                    fflush(stdout);
-                }
-                else if (statusType == 1)
-                {
-                    printf("Terminated by signal %d\n", status);
-                    fflush(stdout);
-                }
+                statusCmd();
             }
 
             else if (strcmp(currentCmd->cmd, "cd") == 0)
             {
-                char buffer[100];
-                int bufsize = 100;
-                char buffer2[100];
-                int bufsize2 = 100;
-
                 // Ignore background setting for built-ins
                 currentCmd->background = 0;
-
-                getcwd(buffer, bufsize);
                 chDirCmd(currentCmd);
-                getcwd(buffer2, bufsize2);
             }
             else
             {
@@ -792,33 +835,7 @@ int main(void)
         // is just BEFORE command line access and control are returned to the user, 
         // every time that happens.
         checkBackground();
-
-        // // Free memory - parts of command struct are dynamically allocated
-        if (currentCmd->cmd != NULL)
-        {
-            free(currentCmd->cmd);
-        }
-        if (currentCmd->numArgs > 0)
-        {
-            // currentCmd->userArgs array itself was not dynamically allocated,
-            // but its contents were
-            for (int i = 0; i < currentCmd->numArgs; i++)
-            {
-                if (currentCmd->userArgs[i] != NULL)
-                {
-                    free(currentCmd->userArgs[i]);
-                }
-            }
-        }
-        if (currentCmd->inputFile)
-        {
-            free(currentCmd->inputFile);
-        }
-        if (currentCmd->outputFile)
-        {
-            free(currentCmd->outputFile);
-        }
-        free(currentCmd);
+        cleanup(currentCmd);
     }
 
     return 0;
