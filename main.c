@@ -1,7 +1,7 @@
 /* Author: Madeline Jacques (jacquema@oregonstate.edu)
    CS 344 W 22 Assignment 3 (Portfolio Project)
    Due Date: 2/7/22
-   Last Updated: 2/7/22
+   Last Updated: 2/9/22
    Description: smallsh is a scaled down shell built in C. It has a subset
                 of the features in a shell such as bash. The main things
                 smallsh can do are:
@@ -29,7 +29,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <sys/types.h>
+#include <sys/wait.h>
 #include <signal.h>
 #include <errno.h>
 
@@ -162,26 +162,6 @@ void removeBgPID(pid_t pid)
 }
 
 
-/* displayBgTracker -----------------------------------------------------------
-   Description: Prints the contents of the background process tracking array
-   TODO: Remove before final submission, this was just used for debugging.
------------------------------------------------------------------------ */
-void displayBgTracker()
-{
-    for (int i = 0; i < 200; i++)
-    {
-        if (bgPIDs[i] != 0)
-        {
-            printf("[%d]: %d ", i, bgPIDs[i]);
-            fflush(stdout);
-        }
-    }
-    printf("\nDone printing, size of array is %d/200.\n", bgPIDsSize);
-    fflush(stdout);
-    return;
-}
-
-
 /* checkBackground -----------------------------------------------------------
    Description: Cycles through the background PID tracking array bkgPID and
                 checks if each PID listed has completed. Prints a confirmation
@@ -310,7 +290,7 @@ struct cmd_elements *getUserInput()
 
             if (token != NULL)
             {
-                // check if the token is < > or &
+                // check if the token is < >
                 if (strcmp(token, "<") == 0)
                 {
                     // then the next token we would want to store in userCmd->inputFile
@@ -400,15 +380,16 @@ struct cmd_elements *getUserInput()
 }
 
 
-/* exitCmd -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+/* statusCmd -----------------------------------------------------------
+   Description: Built-in function which returns the exit/signal code
+                of the last foreground process to complete.
+   Arguments: None. Relies on global variable status and statusType.
+   Returns: Nothing, but prints message to console.
 ----------------------------------------------------------------------- */
 void statusCmd()
 {
     // Status only tracked for foreground processes! 
+    // Type 0 = exit, 1 = signal
     if (statusType == 0)
     {
         printf("Exit value %d\n", status);
@@ -420,6 +401,7 @@ void statusCmd()
         fflush(stdout);
     }
 }
+
 
 /* chDirCmd -----------------------------------------------------------
    Description: Built-in command to change the current directory. If no
@@ -502,6 +484,7 @@ void inputRedirect(struct cmd_elements *currentCmd)
     {
         printf("Cannot open %s for input.\n", currentCmd->inputFile);
         fflush(stdout);
+        status = 1;
         exit(1);
     }
     // If no error, use dup2() to set up redirection
@@ -514,6 +497,7 @@ void inputRedirect(struct cmd_elements *currentCmd)
         {
             printf("Cannot redirect %s for input.\n", currentCmd->inputFile);
             fflush(stdout);
+            status = 1;
             exit(1);
         }
     }
@@ -531,7 +515,7 @@ void inputRedirect(struct cmd_elements *currentCmd)
 ----------------------------------------------------------------------- */
 void outputRedirect(struct cmd_elements *currentCmd)
 {
-    // Output file redirected via stdout should be opened write-onlyl
+    // Output file redirected via stdout should be opened write-only,
     // should be truncated if it already exists or created if it does 
     // not exist. If your shell cannot open the output file it should 
     // print error message, set the exit status 1 (but don't exit shell)
@@ -550,6 +534,7 @@ void outputRedirect(struct cmd_elements *currentCmd)
     {
         printf("Cannot open %s for output.\n", currentCmd->outputFile);
         fflush(stdout);
+        status = 1;
         exit(1);
     }
     // If no error, use dup2() to set up redirection
@@ -562,19 +547,27 @@ void outputRedirect(struct cmd_elements *currentCmd)
         {
             printf("Cannot redirect %s for output.\n", currentCmd->outputFile);
             fflush(stdout);
+            status = 1;
             exit(1);
         }
     }
+    return;
 }
 
 
 /* runCommand -----------------------------------------------------------
-   Description: TODO
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+   Description: Runs user-entered command with any arguments. If the command
+                cannot be found, prints an error message. The command is run
+                as part of a child process which can be specified using &
+                to run in the background. Note that child processes have
+                some changes to signal handling. Adds any background processed
+                to global background PID tracking array. 
+   Arguments: Pointer to cmd_elements struct containing information about
+              the current user-entered command.
+   Returns: None, but may print to console and does change global variables
+            status and statusType depending on results of process.
 ----------------------------------------------------------------------- */
-void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
+void runCommand(struct cmd_elements *currentCmd){
 	
 	int childStatus;
     char *argsWithFrontBuffer[currentCmd->numArgs + 1];
@@ -647,8 +640,9 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
             // and the child process will exit itself.
             perror(currentCmd->cmd);
             fflush(stdout);
-            *status = 1;
+            status = 1;
             exit(1);
+            break;
 	
         default:
             
@@ -679,8 +673,8 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
                     
                 if (WIFEXITED(childStatus))
                 {
-                    *status = WEXITSTATUS(childStatus);
-                    *statusType = 0;
+                    status = WEXITSTATUS(childStatus);
+                    statusType = 0;
                 } 
                 // If a child foreground process is killed by a signal, the parent must immediately 
                 // print out the number of the signal that killed it's foreground child process 
@@ -688,9 +682,9 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
                 else if (WIFSIGNALED(childStatus))
                 {
                     printf("Terminated by signal %d\n", WTERMSIG(childStatus));
-                    *status = WTERMSIG(childStatus);
-                    *statusType = 1;
                     fflush(stdout);
+                    status = WTERMSIG(childStatus);
+                    statusType = 1;
                 }
             }
             break;
@@ -698,31 +692,13 @@ void runCommand(struct cmd_elements *currentCmd, int *status, int *statusType){
     return;
 }
 
-// Debug printing
-// TODO - remove this before final submission
-void printCommand(struct cmd_elements *currentCmd)
-{
-    printf("---Command: %s | %d Args: ", currentCmd->cmd, currentCmd->numArgs);
-    fflush(stdout);
-    int argIndex = 0;
-    while (currentCmd->userArgs[argIndex] != NULL)
-    {
-        printf("%s, ", currentCmd->userArgs[argIndex]);
-        fflush(stdout);
-        argIndex++;
-    }
-    printf("\n---Input: %s | Output: %s\n", currentCmd->inputFile, currentCmd->outputFile);
-    fflush(stdout);
-    printf("---Background (0 for no, 1 for yes): %d\n", currentCmd->background);
-    fflush(stdout);
-}
-
 
 /* cleanup -----------------------------------------------------------
-   Description: TODO
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+   Description: Frees dynamically allocated memory used in creating
+                the command struct.
+   Arguments: Pointer to cmd_elements struct containing information about
+              the current user-entered command.
+   Returns: Nothing.
 ----------------------------------------------------------------------- */
 void cleanup(struct cmd_elements *currentCmd)
 {
@@ -756,14 +732,15 @@ void cleanup(struct cmd_elements *currentCmd)
 
 
 /* exitCmd -----------------------------------------------------------
-   Description: Purpose and general use of the function t/o the application
-   Arguments: Identify and describe all arguments
-              *Include any assumptions related to the data
-   Returns: Identify and describe return data
+   Description: Exits the program after completing a final check to see
+                if any more background processes finished, and kills
+                any remaining unfinished background processes.
+   Arguments: Pointer to cmd_elements struct containing information about
+              the last user-entered command.
+   Returns: Nothing, exits shell with code 0.
 ----------------------------------------------------------------------- */
 void exitCmd(struct cmd_elements *currentCmd)
 {
-    // TODO - kill in-progress background process
     // Check if any background processes finished
     checkBackground();
     // Kill any remaining children before exiting
@@ -780,6 +757,7 @@ void exitCmd(struct cmd_elements *currentCmd)
 }
 
 
+/* MAIN --------------------------------------------------------------- */
 int main(void)
 {
     // SIGNAL HANDLING ----------------------------------------------
@@ -828,7 +806,7 @@ int main(void)
             }
             else
             {
-                runCommand(currentCmd, &status, &statusType);
+                runCommand(currentCmd);
             }
         }
         // The time to print out when these background processes have completed 
